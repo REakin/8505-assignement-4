@@ -2,3 +2,5 @@
 *.pyd
 build/*
 *.c
+__pycache__/*
+config1.txt
